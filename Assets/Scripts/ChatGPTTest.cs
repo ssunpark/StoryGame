@@ -20,7 +20,8 @@ public class ChatGPTTest : MonoBehaviour
     public TMP_InputField PromptField; // 입력 필드
     public Button SendButton; // 보내기 버튼
     public AudioSource MyAudioSource; //TTS 재생할 오디오 소스
-    public RawImage MyRawImage; 
+    public RawImage MyRawImage;
+    private string _key;
 
 
 
@@ -33,7 +34,8 @@ public class ChatGPTTest : MonoBehaviour
     {
 
         // 1. API 클라이언트 초기화 -> ChatGPT 접속
-        _api = new OpenAIClient(OPEANAI_API_KEY);
+        _key = APIKeys.OPEANAI_API_KEY;
+        _api = new OpenAIClient(_key);
 
         // CHAT-F
         // C: Context   : 문맥, 상황을 많이 알려줘라
