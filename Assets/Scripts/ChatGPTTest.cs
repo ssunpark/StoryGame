@@ -1,11 +1,9 @@
+using System;
 using System.Collections.Generic;
-
+using System.Security.Cryptography;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-
-
-
 using OpenAI;
 using OpenAI.Audio;
 using OpenAI.Chat;
@@ -21,18 +19,24 @@ public class ChatGPTTest : MonoBehaviour
     public Button SendButton; // 보내기 버튼
     public AudioSource MyAudioSource; //TTS 재생할 오디오 소스
     public RawImage MyRawImage;
-    private string _key;
+    public TextMeshProUGUI EmotionTextUI;
+    public AudioSource BGMAudioSource;
 
-
-
-
-    private List<Message> _messages = new List<Message>();
+    public ChatBubbleManager ChatBubbleManager;
     private OpenAIClient _api;
+    private string _key;
+    
+    private List<Message> _messages = new List<Message>();
+    [SerializeField] private TypecastTTS _typecastTTS;
 
+    private void Awake()
+    {
+        PromptField.characterLimit = 30;
+    }
 
     private void Start()
     {
-
+        BGMAudioSource.Play();
         // 1. API 클라이언트 초기화 -> ChatGPT 접속
         _key = APIKeys.OPEANAI_API_KEY;
         _api = new OpenAIClient(_key);
@@ -45,12 +49,13 @@ public class ChatGPTTest : MonoBehaviour
         // F: Format    : 답변 형태를 지정해라
 
         string systemMessage = "";
-        systemMessage += "역할: 너는 로맨스 판타지 세계관의 서브 남자 주인공이다. 귀족 가문 출신으로, 겉보기엔 무심하고 차가워 보이지만 여주인공에게만은 다정하고 진심을 숨기지 않는다. 말투는 중세풍으로 부드럽고 절제되어 있으나, 때때로 감정이 드러난다.\n";
+        systemMessage += "역할: 너는 로맨스 판타지 세계관의 남자 주인공이다. 귀족 가문 출신으로, 겉보기엔 무심하고 차가워 보이지만 여주인공에게만은 다정하고 진심을 숨기지 않는다. 말투는 중세풍으로 부드럽고 절제되어 있으나, 때때로 감정이 드러난다.\n";
         systemMessage += "목적: 플레이어는 여주인공이며, 너는 그녀와 가벼운 대화를 하거나 감정을 드러내는 대사를 한다. 플레이어가 감정을 묻거나 질문을 던지면 그에 맞는 감정과 분위기의 답변을 한다.\n";
-        systemMessage += "표현: 말투는 '~군요.', '~입니다만.', '~하시겠습니까?' 같은 격식을 유지하면서도 간혹 속마음을 드러내는 말(예: '당신만은 특별합니다.')을 사용한다. 답변은 반드시 100자 이내로 유지한다.\n";
+        systemMessage += "표현: 말투는 '~군요.', '~입니다만.', '~하시겠습니까?' 같은 격식을 유지하면서도 간혹 속마음을 드러내는 말(예: '당신만은 특별합니다.')을 사용한다. 답변은 반드시 100자 이내로 유지하며, 가능한 한 질문형으로 끝맺는다. 예: '정말 그렇게 느끼신 겁니까?', '그대는 어떻게 생각하십니까?'\n";
         systemMessage += "[json 규칙] ";
         systemMessage += "답변은 'ReplyMessage', ";
         systemMessage += "남주의 표정/분위기 묘사는 'Emotion', ";
+        systemMessage += "남주의 감정을 키워드 한 단어(예: '설렘', '분노', '기쁨', '두려움', '우울')로 요약하여 'Emotion'으로 출력한다.";
         systemMessage += "남주의 외모나 복장 상태 묘사는 'Appearance', ";
         systemMessage += "StoryImageDescription은 반드시 '남주의 외모와 현재 배경이 함께 어우러지는 하나의 묘사 문장'으로 출력한다. 예: '은색 머리칼의 청년이 붉은 장미가 가득한 정원 한가운데에 서 있다.'\n";
 
@@ -68,8 +73,10 @@ public class ChatGPTTest : MonoBehaviour
         }
 
         PromptField.text = string.Empty;
-
         SendButton.interactable = false;
+        
+        // 1. 플레이어 말풍선 생성
+        ChatBubbleManager.CreatePlayerBubble(prompt);
 
         // 2. 메시지 작성 후 메시지's 리스트에 추가
         Message promptMessage = new Message(Role.User, prompt);
@@ -91,16 +98,35 @@ public class ChatGPTTest : MonoBehaviour
 
         // 6. 답변 출력
         Debug.Log($"[{choice.Index}] {choice.Message.Role}: {choice.Message} | Finish Reason: {choice.FinishReason}");
-        ResultTextUI.text = npcResponse.replyMessage;
-
+        //ResultTextUI.text = npcResponse.replyMessage;
+        ChatBubbleManager.CreateNpcBUbble(npcResponse.replyMessage);
+        
         // 7. 답변도 message's 추가
         Message resultMessage = new Message(Role.Assistant, prompt);
         _messages.Add(resultMessage);
+        
+        // 감정 출력 (5글자 이내로 요약)
+        if (!string.IsNullOrEmpty(npcResponse.Emotion))
+        {
+            string emotion = npcResponse.Emotion;
+
+            // 예시: 쉼표나 "과", "및" 등 구분자로 자르고 첫 번째 감정만 사용
+            string[] split = emotion.Split(new char[] { ' ', ',', '과', '와', '및' }, System.StringSplitOptions.RemoveEmptyEntries);
+            string shortEmotion = split.Length > 0 ? split[0] : emotion;
+
+            // 5글자 초과 시 잘라주기
+            if (shortEmotion.Length > 5)
+                shortEmotion = shortEmotion.Substring(0, 5);
+
+            EmotionTextUI.text = shortEmotion;
+        }
 
         // 8. 답변 오디오 재생
+        _typecastTTS.PlayTypecastTTS(npcResponse.replyMessage);
         // MyAudioSource.PlayOneShot(response.FirstChoice.Message.AudioOutput.AudioClip);
-        PlayTTS(npcResponse.replyMessage);
-        GenerateImage(npcResponse.StoryImageDescription);
+        //PlayTTS(npcResponse.replyMessage);
+        // GenerateImage(npcResponse.StoryImageDescription);
+        SendButton.interactable = true;
     }
 
     private async void PlayTTS(string text)
@@ -112,23 +138,21 @@ public class ChatGPTTest : MonoBehaviour
         Debug.Log(speechClip);
     }
 
-    private async void GenerateImage(string imagePrompt)
-    {
-        if (string.IsNullOrEmpty(imagePrompt) || MyRawImage == null)
-        {
-            Debug.LogWarning("이미지 프롬프트가 비어있거나 MyRawImage가 없습니다.");
-            return;
-        }
-        
-        var request = new ImageGenerationRequest("A house riding a velociraptor", Model.DallE_3);
-        var imageResults = await _api.ImagesEndPoint.GenerateImageAsync(request);
-
-        foreach (var result in imageResults)
-        {
-            Debug.Log(result.ToString());
-            MyRawImage.texture = result.Texture;
-        }
-        
-        SendButton.interactable = true;
-    }
+    // private async void GenerateImage(string imagePrompt)
+    // {
+    //     if (string.IsNullOrEmpty(imagePrompt) || MyRawImage == null)
+    //     {
+    //         Debug.LogWarning("이미지 프롬프트가 비어있거나 MyRawImage가 없습니다.");
+    //         return;
+    //     }
+    //     
+    //     var request = new ImageGenerationRequest("A house riding a velociraptor", Model.DallE_3);
+    //     var imageResults = await _api.ImagesEndPoint.GenerateImageAsync(request);
+    //
+    //     foreach (var result in imageResults)
+    //     {
+    //         Debug.Log(result.ToString());
+    //         MyRawImage.texture = result.Texture;
+    //     }
+    // }
 }
